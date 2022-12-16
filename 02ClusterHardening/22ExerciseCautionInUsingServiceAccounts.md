@@ -1,9 +1,11 @@
 # マニュアル
 
 https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/
+https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account
+
 
 # 学習ログ
-
+## Pod内でのserviceaccountの利用
 serviceaccountを作成する。
 ```
 $ kubectl create sa sa01
@@ -131,3 +133,41 @@ root@nginx:~# curl https://10.96.0.1 -k -H "Authorization: Bearer $(cat /run/sec
 
 同じForbiddenだが、serviceaccountで認証できている。
 RBACでこのserviceaccountにroleを割り当ててると、Podの中からKubernetesリソースのgetやdeleteができるようになる。
+
+## serviceaccountのマウントの無効化
+
+先ほど作成したPodのマニュフェストを以下のように書き換えて、Podを作り直す。
+
+```pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: nginx
+  name: nginx
+spec:
+  serviceAccountName: sa01
+  automountServiceAccountToken: false # added
+  containers:
+  - image: nginx
+    name: nginx
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+```
+
+```
+$ kubectl replace -f pod.yaml --force
+pod "nginx" deleted
+pod/nginx replaced
+```
+
+Podにログインして、sericeaccountをマウントしてないことを確認する。
+
+```
+$ kubectl exec -it nginx -- bash
+root@nginx:/# mount |grep service
+root@nginx:/#
+```
