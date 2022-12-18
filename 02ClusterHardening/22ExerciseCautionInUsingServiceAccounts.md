@@ -171,3 +171,33 @@ $ kubectl exec -it nginx -- bash
 root@nginx:/# mount |grep service
 root@nginx:/#
 ```
+
+## RBACによるserviceaccountへの権限付与
+
+```
+$ kubectl get sa
+NAME      SECRETS   AGE
+default   0         3d23h
+sa01      0         2d23h
+```
+
+default namespaceでのsa01の権限を確認する。
+
+```
+$ kubectl auth can-i delete secrets --as system:serviceaccount:default:sa01
+no
+```
+
+ClusterRoleBindingを作成する。
+
+```
+$ kubectl create clusterrolebinding crb01 --clusterrole edit --serviceaccount default:sa01
+clusterrolebinding.rbac.authorization.k8s.io/crb01 created
+```
+
+権限を再度確認する。
+
+```
+$ kubectl auth can-i delete secrets --as system:serviceaccount:default:sa01
+yes
+```
