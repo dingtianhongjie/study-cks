@@ -2,6 +2,8 @@
 https://kubernetes.io/docs/tutorials/security/apparmor/
 https://gitlab.com/apparmor/apparmor/-/wikis/Documentation
 
+https://kubernetes.io/docs/tutorials/security/seccomp/
+
 # 学習ログ
 アプリケーションやLibraryが動作するUser SpaceとKernel Spaceの間に監視するハードニングツールを導入する。
 
