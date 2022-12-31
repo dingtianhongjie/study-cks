@@ -200,3 +200,52 @@ $ kubectl exec -it pod -- sh
 / # sysctl kernel.hostname=hoge
 kernel.hostname = hoge
 ```
+
+### Disable Privilege Escalation
+
+defaultの特権の設定を確認する。
+コンテナの特権が有効になっている。
+
+```
+$ kubectl exec -it pod -- sh
+/ # cat /proc/1/status |grep NoNewPrivs
+NoNewPrivs:     0
+/ # exit
+```
+
+以下のようにSecurityContextを設定して、特権を無効にする。
+
+```pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: pod
+  name: pod
+spec:
+  containers:
+  - command:
+    - sh
+    - -c
+    - sleep 1d
+    image: busybox
+    name: pod
+    resources: {}
+    securityContext:
+      allowPrivilegeEscalation: false
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+```
+
+Podを入れ替えて、特権が無効になっていることを確認する。
+
+```
+$ kubectl replace -f pod.yaml --force
+pod "pod" deleted
+pod/pod replaced
+$ kubectl exec -it pod -- sh
+/ # cat /proc/1/status |grep NoNewPrivs
+NoNewPrivs:     1
+```
