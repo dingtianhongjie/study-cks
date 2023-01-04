@@ -72,7 +72,7 @@ $ kubectl exec pod -- cat /etc/secret1/user
 admin
 ```
 
-## Worker nodeからSecretを確認してみる（セキュリティの問題）
+## Worker node（Container Runtime）からSecretをハッキングする
 
 Podがデプロイされているノードを確認する。
 →Workerノード
@@ -154,4 +154,74 @@ bin  boot  dev  docker-entrypoint.d  docker-entrypoint.sh  etc  home  lib  lib64
 ```
 # cat /proc/206898/root/etc/secret1/user
 admin
+```
+
+## etcdからSecretをハッキングする
+
+etcdctlをインストールする
+
+```
+# ETCD_VER=v3.4.23
+# GOOGLE_URL=https://storage.googleapis.com/etcd
+# GITHUB_URL=https://github.com/etcd-io/etcd/releases/download
+# DOWNLOAD_URL=${GOOGLE_URL}
+# curl -L ${DOWNLOAD_URL}/${ETCD_VER}/etcd-${ETCD_VER}-linux-amd64.tar.gz -o /tmp/etcd-${ETCD_VER}-linux-amd64.tar.gz
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100 14.8M  100 14.8M    0     0  78.0M      0 --:--:-- --:--:-- --:--:-- 78.0M
+# mkdir -p /tmp/etcd-download-test
+# tar xzvf /tmp/etcd-${ETCD_VER}-linux-amd64.tar.gz -C /tmp/etcd-download-test --strip-components=1
+# rm -f /tmp/etcd-${ETCD_VER}-linux-amd64.tar.gz
+# mv /tmp/etcd-download-test/etcdctl /usr/bin
+# ETCDCTL_API=3 etcdctl version
+etcdctl version: 3.4.23
+API version: 3.4
+```
+
+etcdのhealthを確認する。→unhealthy（etcdに接続できない）
+
+```
+# ETCDCTL_API=3 etcdctl endpoint health
+{"level":"warn","ts":"2023-01-04T13:20:50.396Z","caller":"clientv3/retry_interceptor.go:62","msg":"retrying of unary invoker failed","target":"endpoint://client-e7fee070-4a69-4f99-b0dc-05def6c6f8b2/127.0.0.1:2379","attempt":0,"error":"rpc error: code = DeadlineExceeded desc = latest balancer error: all SubConns are in TransientFailure, latest connection error: connection closed"}
+127.0.0.1:2379 is unhealthy: failed to commit proposal: context deadline exceeded
+Error: unhealthy cluster
+```
+
+API Serverのマニフェストを確認して、etcdのCredentialを確認する。
+
+```
+# cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep etcd
+    - --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt
+    - --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt
+    - --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key
+    - --etcd-servers=https://127.0.0.1:2379
+```
+
+Credential情報を指定して、再度healthを確認する。
+→接続可能
+
+```
+# ETCDCTL_API=3 etcdctl \
+> --cert /etc/kubernetes/pki/apiserver-etcd-client.crt \
+> --key /etc/kubernetes/pki/apiserver-etcd-client.key \
+> --cacert /etc/kubernetes/pki/etcd/ca.crt \
+> endpoint health
+127.0.0.1:2379 is healthy: successfully committed proposal: took = 7.377674ms
+```
+
+getでSecretを指定すると、その中身が見える。（が文字化けしてわからない・・・）
+
+```
+# ETCDCTL_API=3 etcdctl --cert /etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt get /registry/secrets/default/secret1
+/registry/secrets/default/secret1
+k8s
+
+
+v1Secret
+溌
+secret1default"*$9fdfee8e-e02b-4de8-9c30-64f437bd89ad2・
+                                                        磨
+・粢胖・胄裔ﾕ磑褻・ ﾆ鱧・ｱｺｭ
+ｫ裵貅蓊｢ｺ裵ｮ｢ｺ・ｬ｢貅褪｢ｺ・ｬ｢貅｢ｺ・ﾂ
+褪砌渧隝蠅
 ```
