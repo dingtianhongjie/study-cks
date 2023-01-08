@@ -1,5 +1,6 @@
 # マニュアル
 https://kubernetes.io/ja/docs/concepts/configuration/secret/
+https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/
 
 # 学習ログ
 ## Secretの作成と利用
@@ -225,3 +226,91 @@ secret1default"*$9fdfee8e-e02b-4de8-9c30-64f437bd89ad2・
 ｫ裵貅蓊｢ｺ裵ｮ｢ｺ・ｬ｢貅褪｢ｺ・ｬ｢貅｢ｺ・ﾂ
 褪砌渧隝蠅
 ```
+
+## etcdの暗号化
+
+```
+# cd /etc/kubernetes/
+# mkdir etcd
+# cd /etcd
+```
+
+暗号化で使用する鍵を作成する。
+
+```
+# echo -n passwordpassword | base64
+cGFzc3dvcmRwYXNzd29yZA==
+```
+
+EncryptionConfigurationのマニフェストを作成する。
+
+```ec.yaml
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources:
+      - secrets
+      - configmaps
+      - pandas.awesome.bears.example
+    providers:
+      - aescbc:
+          keys:
+            - name: key1
+              secret: cGFzc3dvcmRwYXNzd29yZA==
+      - identity: {}
+```
+
+kube-apiserver.yamlで上記ファイルを指定する。
+
+```
+# cd /etc/kubernetes/manifests
+# vim kube-apiserver.yaml
+```
+
+以下のように追記する。
+
+```kube-apiserver.yaml
+・・・
+spec:
+  containers:
+  - command:
+    - kube-apiserver
+    - --encryption-provider-config=/etc/kubernetes/etcd/ec.yaml # 追加
+・・・
+   volumeMounts:
+    - mountPath: /etc/kubernetes/etcd #追加
+      name: etcd #追加
+      readOnly: true #追加
+・・・
+  volumes:
+  - hostPath: #追加
+      path: /etc/kubernetes/etcd #追加
+      type: DirectoryOrCreate #追加
+    name: etcd #追加
+```
+
+kube-apiserverが再起動する。
+
+新しくSecretを作成する。
+
+```
+$ kubectl create secret generic very-secure --from-literal key=aabbccdd
+secret/very-secure created
+```
+
+etcdに保存されたSecretを確認する。
+
+```
+# ETCDCTL_API=3 etcdctl --cert /etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt get /registry/secrets/default/very-secure
+/registry/secrets/default/very-secure
+k8s:enc:aescbc:v1:key1:兊}
+                          朽p
+・｡ﾞ㍍｣謖j?踟ﾕ昧昻           ・ﾌﾏ?浜
+                  昵・蝸哽暼・・・仞??鱆ﾞﾕ粋斈嬉葷ｯ､Ζｭ隠у蔡撃鬪ｪ罐頃ｯ・ ??悦・ﾒ・ｱﾎﾚﾜｮｹﾌ・都・
+                                                                                                  ・・驕        老?n畆0勃謙 |・+俐鎧;考 娥
+                                                                                                                                          )∑欧栢c帙情抖z竸揶・
+                                                                                                                                                               ・-+\書??>膺嫗・轂苣wM竭膿R
+```
+
+暗号化されてる（文字化けでよくわからないが）
+aescbcが使われていると表示はされている。
