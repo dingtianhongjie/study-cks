@@ -1,4 +1,5 @@
 # マニュアル
+https://kubernetes.io/ja/docs/concepts/containers/runtime-class/
 
 # 学習ログ
 ## コンテナからLinuxにsyscallできることを確認
@@ -130,4 +131,174 @@ close(1)                                = 0
 close(2)                                = 0
 exit_group(0)                           = ?
 +++ exited with 0 +++
+```
+
+## runtimeClassの作成
+
+```runtime.yaml
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+```
+```
+$ kubectl apply -f runtime.yaml
+runtimeclass.node.k8s.io/gvisor created
+$ kubectl get runtimeclasses.node.k8s.io
+NAME     HANDLER   AGE
+gvisor   runsc     32s
+```
+
+作成したruntimeClassを指定してPodを作成する。
+
+```pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: gvisor
+  name: gvisor
+spec:
+  runtimeClassName: gvisor
+  containers:
+  - image: nginx
+    name: gvisor
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+```
+
+```
+$ kubectl apply -f pod.yaml
+pod/gvisor created
+$ kubectl get pod
+NAME     READY   STATUS              RESTARTS   AGE
+gvisor   0/1     ContainerCreating   0          64s
+```
+
+詳細を確認する。
+
+```
+$ kubectl describe pod gvisor
+Name:                gvisor
+・・・
+Events:
+  Type     Reason                  Age                  From               Message
+  ----     ------                  ----                 ----               -------
+  Normal   Scheduled               2m21s                default-scheduler  Successfully assigned default/gvisor to worker-20230109
+  Warning  FailedCreatePodSandBox  2s (x12 over 2m21s)  kubelet            Failed to create pod sandbox: rpc error: code = Unknown desc = failed to get sandbox runtime: no runtime for "runsc" is configured
+```
+
+まだgVisorをインストールしてないので、エラーになる。
+
+## gVisorのインストール
+WorkerノードでgVisorをインストールする。
+
+```
+worker$ bash <(curl -s https://raw.githubusercontent.com/killer-sh/cks-course-environment/master/course-content/microservice-vulnerabilities/container-runtimes/gvisor/install_gvisor.sh)
+Hit:1 https://packages.cloud.google.com/apt kubernetes-xenial InRelease
+Hit:2 http://iad-ad-3.clouds.archive.ubuntu.com/ubuntu focal InRelease
+Hit:3 http://security.ubuntu.com/ubuntu focal-security InRelease
+Hit:4 http://iad-ad-3.clouds.archive.ubuntu.com/ubuntu focal-updates InRelease
+Hit:5 http://iad-ad-3.clouds.archive.ubuntu.com/ubuntu focal-backports InRelease
+Reading package lists... Done
+Reading package lists... Done
+Building dependency tree
+Reading state information... Done
+ca-certificates is already the newest version (20211016ubuntu0.20.04.1).
+curl is already the newest version (7.68.0-1ubuntu2.15).
+software-properties-common is already the newest version (0.99.9.8).
+apt-transport-https is already the newest version (2.0.9).
+gnupg-agent is already the newest version (2.2.19-3ubuntu2.2).
+0 upgraded, 0 newly installed, 0 to remove and 26 not upgraded.
+--2023-01-12 13:03:22--  https://storage.googleapis.com/gvisor/releases/release/20210806/x86_64/runsc
+Resolving storage.googleapis.com (storage.googleapis.com)... 172.253.62.128, 142.251.16.128, 142.251.167.128, ...
+Connecting to storage.googleapis.com (storage.googleapis.com)|172.253.62.128|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 35074107 (33M) [application/octet-stream]
+Saving to: ‘runsc’
+
+runsc                                                       100%[========================================================================================================================================>]  33.45M   161MB/s    in 0.2s
+
+2023-01-12 13:03:22 (161 MB/s) - ‘runsc’ saved [35074107/35074107]
+
+--2023-01-12 13:03:22--  https://storage.googleapis.com/gvisor/releases/release/20210806/x86_64/runsc.sha512
+Reusing existing connection to storage.googleapis.com:443.
+HTTP request sent, awaiting response... 200 OK
+Length: 136 [application/octet-stream]
+Saving to: ‘runsc.sha512’
+
+runsc.sha512                                                100%[========================================================================================================================================>]     136  --.-KB/s    in 0s
+
+2023-01-12 13:03:22 (62.3 MB/s) - ‘runsc.sha512’ saved [136/136]
+
+--2023-01-12 13:03:22--  https://storage.googleapis.com/gvisor/releases/release/20210806/x86_64/containerd-shim-runsc-v1
+Reusing existing connection to storage.googleapis.com:443.
+HTTP request sent, awaiting response... 200 OK
+Length: 24627868 (23M) [application/octet-stream]
+Saving to: ‘containerd-shim-runsc-v1’
+
+containerd-shim-runsc-v1                                    100%[========================================================================================================================================>]  23.49M   129MB/s    in 0.2s
+
+2023-01-12 13:03:22 (129 MB/s) - ‘containerd-shim-runsc-v1’ saved [24627868/24627868]
+
+--2023-01-12 13:03:22--  https://storage.googleapis.com/gvisor/releases/release/20210806/x86_64/containerd-shim-runsc-v1.sha512
+Reusing existing connection to storage.googleapis.com:443.
+HTTP request sent, awaiting response... 200 OK
+Length: 155 [application/octet-stream]
+Saving to: ‘containerd-shim-runsc-v1.sha512’
+
+containerd-shim-runsc-v1.sha512                             100%[========================================================================================================================================>]     155  --.-KB/s    in 0s
+
+2023-01-12 13:03:22 (59.5 MB/s) - ‘containerd-shim-runsc-v1.sha512’ saved [155/155]
+
+FINISHED --2023-01-12 13:03:22--
+Total wall clock time: 0.8s
+Downloaded: 4 files, 57M in 0.4s (146 MB/s)
+runsc: OK
+containerd-shim-runsc-v1: OK
+```
+
+Podを確認すると、Runningになっている。
+
+```
+$ kubectl get pod
+NAME     READY   STATUS    RESTARTS   AGE
+gvisor   1/1     Running   0          9m46s
+```
+
+Podからカーネルバージョンを確認する。
+→gVisorがエミュレートしたカーネルバージョンが表示される。
+
+```
+$ kubectl exec -it gvisor -- uname -r
+4.4.0
+```
+
+```
+$ kubectl get node -o wide
+NAME              STATUS   ROLES           AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION       CONTAINER-RUNTIME
+master-20230109   Ready    control-plane   3d    v1.25.4   10.0.0.88     <none>        Ubuntu 20.04.5 LTS   5.15.0-1025-oracle   containerd://1.6.12
+worker-20230109   Ready    <none>          3d    v1.25.4   10.0.0.140    <none>        Ubuntu 20.04.5 LTS   5.15.0-1025-oracle   containerd://1.6.12
+```
+
+gVisorが起動していることも確認できる。
+
+```
+$ kubectl exec -it gvisor -- dmesg
+[    0.000000] Starting gVisor...
+[    0.521694] Reticulating splines...
+[    0.595901] Rewriting operating system in Javascript...
+[    0.770972] Letting the watchdogs out...
+[    1.243697] Conjuring /dev/null black hole...
+[    1.710787] Creating process schedule...
+[    2.137937] Reading process obituaries...
+[    2.580221] Synthesizing system calls...
+[    2.960449] Feeding the init monster...
+[    3.455475] Waiting for children...
+[    3.586123] Recruiting cron-ies...
+[    3.843952] Ready!
 ```
