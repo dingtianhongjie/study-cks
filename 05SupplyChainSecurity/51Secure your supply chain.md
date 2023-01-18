@@ -1,5 +1,7 @@
 # マニュアル
 
+https://open-policy-agent.github.io/gatekeeper/website/docs/install/
+
 # 学習ログ
 ## Image digest
 
@@ -56,17 +58,24 @@ API ServerのマニフェストのimageをこのIDを指定して書き換える
 ```
 API Serverが上がってくることを確認する。
 
-## OPA
+## OPA Gatekeeper
 
-OPAをインストールする。
+Gatekeeperをインストールする。
+
 ```
-$ kubectl create -f https://raw.githubusercontent.com/killer-sh/cks-course-environment/master/course-content/opa/gatekeeper.yaml
+$ kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper/master/deploy/gatekeeper.yaml
 namespace/gatekeeper-system created
 resourcequota/gatekeeper-critical-pods created
+customresourcedefinition.apiextensions.k8s.io/assign.mutations.gatekeeper.sh created
+customresourcedefinition.apiextensions.k8s.io/assignmetadata.mutations.gatekeeper.sh created
 customresourcedefinition.apiextensions.k8s.io/configs.config.gatekeeper.sh created
 customresourcedefinition.apiextensions.k8s.io/constraintpodstatuses.status.gatekeeper.sh created
 customresourcedefinition.apiextensions.k8s.io/constrainttemplatepodstatuses.status.gatekeeper.sh created
 customresourcedefinition.apiextensions.k8s.io/constrainttemplates.templates.gatekeeper.sh created
+customresourcedefinition.apiextensions.k8s.io/expansiontemplate.expansion.gatekeeper.sh created
+customresourcedefinition.apiextensions.k8s.io/modifyset.mutations.gatekeeper.sh created
+customresourcedefinition.apiextensions.k8s.io/mutatorpodstatuses.status.gatekeeper.sh created
+customresourcedefinition.apiextensions.k8s.io/providers.externaldata.gatekeeper.sh created
 serviceaccount/gatekeeper-admin created
 role.rbac.authorization.k8s.io/gatekeeper-manager-role created
 clusterrole.rbac.authorization.k8s.io/gatekeeper-manager-role created
@@ -74,16 +83,37 @@ rolebinding.rbac.authorization.k8s.io/gatekeeper-manager-rolebinding created
 clusterrolebinding.rbac.authorization.k8s.io/gatekeeper-manager-rolebinding created
 secret/gatekeeper-webhook-server-cert created
 service/gatekeeper-webhook-service created
-Warning: spec.template.metadata.annotations[container.seccomp.security.alpha.kubernetes.io/manager]: deprecated since v1.19, non-functional in a future release; use the "seccompProfile" field instead
 deployment.apps/gatekeeper-audit created
 deployment.apps/gatekeeper-controller-manager created
+poddisruptionbudget.policy/gatekeeper-controller-manager created
+mutatingwebhookconfiguration.admissionregistration.k8s.io/gatekeeper-mutating-webhook-configuration created
 validatingwebhookconfiguration.admissionregistration.k8s.io/gatekeeper-validating-webhook-configuration created
+```
+
+```
+$ kubectl -n gatekeeper-system get all
+NAME                                                 READY   STATUS    RESTARTS      AGE
+pod/gatekeeper-audit-7f4c69f44c-hgc89                1/1     Running   2 (24s ago)   28s
+pod/gatekeeper-controller-manager-6ff6d5cf86-2pv2f   1/1     Running   0             28s
+pod/gatekeeper-controller-manager-6ff6d5cf86-6zp5s   1/1     Running   0             28s
+pod/gatekeeper-controller-manager-6ff6d5cf86-nbnsq   1/1     Running   0             28s
+
+NAME                                 TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+service/gatekeeper-webhook-service   ClusterIP   10.102.234.25   <none>        443/TCP   28s
+
+NAME                                            READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/gatekeeper-audit                1/1     1            1           28s
+deployment.apps/gatekeeper-controller-manager   3/3     3            3           28s
+
+NAME                                                       DESIRED   CURRENT   READY   AGE
+replicaset.apps/gatekeeper-audit-7f4c69f44c                1         1         1       28s
+replicaset.apps/gatekeeper-controller-manager-6ff6d5cf86   3         3         3       28s
 ```
 
 Podを作成する際に、指定したレジストリのみ使用できるようにする。
 
 ```template.yaml
-apiVersion: templates.gatekeeper.sh/v1beta1
+apiVersion: templates.gatekeeper.sh/v1
 kind: ConstraintTemplate
 metadata:
   name: k8strustedimages
@@ -100,6 +130,7 @@ spec:
           image := input.review.object.spec.containers[_].image
           not startswith(image, "docker.io/")
           not startswith(image, "registry.k8s.io/")
+          not startswith(image, "openpolicyagent/")
           msg := "not trusted image!"
         }
 ```
@@ -121,16 +152,33 @@ $ kubectl apply -f template.yaml
 constrainttemplate.templates.gatekeeper.sh/k8strustedimages created
 $ kubectl apply -f constraint.yaml
 k8strustedimages.constraints.gatekeeper.sh/pod-trusted-images created
-$ kubectl get constrainttemplate
-NAME               AGE
-k8strustedimages   57s
-$ kubectl get k8strustedimages
-NAME                 AGE
-pod-trusted-images   63s
 ```
 
 ```
-$ kubectl describe k8strustedimages pod-trusted-images
+$ kubectl get constrainttemplate
+NAME               AGE
+k8strustedimages   22s
+$ kubectl get k8strustedimages.constraints.gatekeeper.sh
+NAME                 ENFORCEMENT-ACTION   TOTAL-VIOLATIONS
+pod-trusted-images
+```
+
+確認する。
+
+```
+$ kubectl run good --image=docker.io/nginx
+pod/good created
+$ kubectl run bad --image=nginx
+pod/bad created
+```
+
+レジストリを指定しなくてもPodが作れてしまう。。
+
+```
+$ kubectl get k8strustedimages.constraints.gatekeeper.sh
+NAME                 ENFORCEMENT-ACTION   TOTAL-VIOLATIONS
+pod-trusted-images                        1
+$ kubectl describe k8strustedimages.constraints.gatekeeper.sh pod-trusted-images
 Name:         pod-trusted-images
 Namespace:
 Labels:       <none>
@@ -138,7 +186,7 @@ Annotations:  <none>
 API Version:  constraints.gatekeeper.sh/v1beta1
 Kind:         K8sTrustedImages
 Metadata:
-  Creation Timestamp:  2023-01-16T13:27:31Z
+  Creation Timestamp:  2023-01-18T13:10:02Z
   Generation:          1
   Managed Fields:
     API Version:  constraints.gatekeeper.sh/v1beta1
@@ -155,7 +203,7 @@ Metadata:
           f:kinds:
     Manager:      kubectl-client-side-apply
     Operation:    Update
-    Time:         2023-01-16T13:27:31Z
+    Time:         2023-01-18T13:10:01Z
     API Version:  constraints.gatekeeper.sh/v1beta1
     Fields Type:  FieldsV1
     fieldsV1:
@@ -168,9 +216,9 @@ Metadata:
     Manager:         gatekeeper
     Operation:       Update
     Subresource:     status
-    Time:            2023-01-16T13:29:21Z
-  Resource Version:  40886
-  UID:               687a61f9-2a22-40c4-8f44-88da5f5ddc21
+    Time:            2023-01-18T13:12:38Z
+  Resource Version:  92879
+  UID:               0dcf091d-7d0a-4ac3-a0c4-1d64ff1d8c39
 Spec:
   Match:
     Kinds:
@@ -179,54 +227,56 @@ Spec:
       Kinds:
         Pod
 Status:
-  Audit Timestamp:  2023-01-16T13:29:20Z
+  Audit Timestamp:  2023-01-18T13:12:36Z
   By Pod:
-    Constraint UID:       687a61f9-2a22-40c4-8f44-88da5f5ddc21
+    Constraint UID:       0dcf091d-7d0a-4ac3-a0c4-1d64ff1d8c39
     Enforced:             true
-    Id:                   gatekeeper-audit-649cbfdc8f-k8zln
+    Id:                   gatekeeper-audit-7f4c69f44c-hgc89
     Observed Generation:  1
     Operations:
       audit
+      mutation-status
       status
-    Constraint UID:       687a61f9-2a22-40c4-8f44-88da5f5ddc21
+    Constraint UID:       0dcf091d-7d0a-4ac3-a0c4-1d64ff1d8c39
     Enforced:             true
-    Id:                   gatekeeper-controller-manager-57575f6fc7-6pcj4
+    Id:                   gatekeeper-controller-manager-6ff6d5cf86-2pv2f
     Observed Generation:  1
     Operations:
+      mutation-webhook
       webhook
-    Constraint UID:       687a61f9-2a22-40c4-8f44-88da5f5ddc21
+    Constraint UID:       0dcf091d-7d0a-4ac3-a0c4-1d64ff1d8c39
     Enforced:             true
-    Id:                   gatekeeper-controller-manager-57575f6fc7-vtj6v
+    Id:                   gatekeeper-controller-manager-6ff6d5cf86-6zp5s
     Observed Generation:  1
     Operations:
+      mutation-webhook
       webhook
-    Constraint UID:       687a61f9-2a22-40c4-8f44-88da5f5ddc21
+    Constraint UID:       0dcf091d-7d0a-4ac3-a0c4-1d64ff1d8c39
     Enforced:             true
-    Id:                   gatekeeper-controller-manager-57575f6fc7-zglp4
+    Id:                   gatekeeper-controller-manager-6ff6d5cf86-nbnsq
     Observed Generation:  1
     Operations:
+      mutation-webhook
       webhook
-  Total Violations:  4
+  Total Violations:  1
   Violations:
     Enforcement Action:  deny
+    Group:
     Kind:                Pod
     Message:             not trusted image!
-    Name:                gatekeeper-audit-649cbfdc8f-k8zln
-    Namespace:           gatekeeper-system
-    Enforcement Action:  deny
-    Kind:                Pod
-    Message:             not trusted image!
-    Name:                gatekeeper-controller-manager-57575f6fc7-6pcj4
-    Namespace:           gatekeeper-system
-    Enforcement Action:  deny
-    Kind:                Pod
-    Message:             not trusted image!
-    Name:                gatekeeper-controller-manager-57575f6fc7-vtj6v
-    Namespace:           gatekeeper-system
-    Enforcement Action:  deny
-    Kind:                Pod
-    Message:             not trusted image!
-    Name:                gatekeeper-controller-manager-57575f6fc7-zglp4
-    Namespace:           gatekeeper-system
+    Name:                bad
+    Namespace:           default
+    Version:             v1
 Events:                  <none>
 ```
+
+Violationsとしてbadが拒否されているとなっているが・・・
+
+```
+$ kubectl get pod
+NAME   READY   STATUS    RESTARTS   AGE
+bad    1/1     Running   0          95s
+good   1/1     Running   0          3m22s
+```
+Podはデプロイされている？？
+んー。。。
