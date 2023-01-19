@@ -280,3 +280,143 @@ good   1/1     Running   0          3m22s
 ```
 Podはデプロイされている？？
 んー。。。
+
+## ImagePolicyWebhook
+
+API Serverのマニフェストを編集する。
+
+```/etc/kubernetes/manifests/kube-apiserver.yaml
+・・・
+spec:
+  containers:
+  - command:
+・・・
+  - --enable-admission-plugins=NodeRestriction,ImagePolicyWebhook
+・・・
+```
+
+API Serverが上がってこないので、ログを確認する。
+→追記したImagePolicyWebhookのConfigがない
+
+```
+# cd /var/log/pods/
+# tail -f kube-system_kube-apiserver-master-20230115_3dad4a921f6ef9bf4c2fd44b96a1c22d/kube-apiserver/3.log
+2023-01-19T12:22:07.833327373Z stderr F I0119 12:22:07.833204       1 server.go:563] external host was not specified, using 10.0.0.161
+2023-01-19T12:22:07.833714095Z stderr F I0119 12:22:07.833650       1 server.go:161] Version: v1.25.5
+2023-01-19T12:22:07.833752708Z stderr F I0119 12:22:07.833686       1 server.go:163] "Golang settings" GOGC="" GOMAXPROCS="" GOTRACEBACK=""
+2023-01-19T12:22:08.464300564Z stderr F I0119 12:22:08.464225       1 shared_informer.go:255] Waiting for caches to sync for node_authorizer
+2023-01-19T12:22:08.464650477Z stderr F E0119 12:22:08.464604       1 run.go:74] "command failed" err="failed to initialize admission: couldn't init admission plugin \"ImagePolicyWebhook\": no config specified"
+```
+
+Configのサンプルをダウンロードする。
+
+```
+# git clone https://github.com/killer-sh/cks-course-environment.git
+Cloning into 'cks-course-environment'...
+remote: Enumerating objects: 467, done.
+remote: Counting objects: 100% (183/183), done.
+remote: Compressing objects: 100% (93/93), done.
+remote: Total 467 (delta 112), reused 142 (delta 90), pack-reused 284
+Receiving objects: 100% (467/467), 138.74 KiB | 19.82 MiB/s, done.
+Resolving deltas: 100% (186/186), done.
+# cp -r cks-course-environment/course-content/supply-chain-security/secure-the-supply-chain/whitelist-registries/ImagePolicyWebhook/ /etc/kubernetes/admission
+# ls -l /etc/kubernetes/admission/
+total 24
+-rw-r--r-- 1 root root  298 Jan 19 12:27 admission_config.yaml
+-rw-r--r-- 1 root root 1135 Jan 19 12:27 apiserver-client-cert.pem
+-rw-r--r-- 1 root root 1703 Jan 19 12:27 apiserver-client-key.pem
+-rw-r--r-- 1 root root 1132 Jan 19 12:27 external-cert.pem
+-rw-r--r-- 1 root root 1703 Jan 19 12:27 external-key.pem
+-rw-r--r-- 1 root root  815 Jan 19 12:27 kubeconf
+```
+
+API Serverのマニフェストを再度追記する。
+
+```/etc/kubernetes/manifests/kube-apiserver.yaml
+
+spec:
+  containers:
+  - command:
+    - kube-apiserver
+    - --admission-control-config-file=/etc/kubernetes/admission/admission_config.yaml
+
+    volumeMounts:
+    - mountPath: /etc/kubernetes/admission
+      name: k8s-admission
+      readOnly: true
+
+ volumes:
+   - hostPath:
+      path: /etc/kubernetes/admission
+      type: DirectoryOrCreate
+    name: k8s-admission
+```
+
+少し待って確認する。
+
+```
+$ kubectl get pod -n kube-system
+NAME                                       READY   STATUS    RESTARTS         AGE
+calico-kube-controllers-74677b4c5f-7n96t   1/1     Running   15 (7m33s ago)   3d23h
+calico-node-9zqzt                          0/1     Running   4 (4h49m ago)    3d23h
+calico-node-jh9pk                          0/1     Running   4 (4h49m ago)    3d23h
+coredns-565d847f94-fmgwf                   1/1     Running   4 (4h49m ago)    3d23h
+coredns-565d847f94-kmw8r                   1/1     Running   4 (4h49m ago)    3d23h
+etcd-master-20230115                       1/1     Running   4 (4h49m ago)    3d23h
+kube-controller-manager-master-20230115    1/1     Running   8 (18m ago)      3d23h
+kube-proxy-2smbp                           1/1     Running   4 (4h49m ago)    3d23h
+kube-proxy-8x2t8                           1/1     Running   4 (4h49m ago)    3d23h
+kube-scheduler-master-20230115             1/1     Running   7 (18m ago)      3d23h
+```
+
+Podは表示されるので、API Serverは上がっているが表示されない。
+→Admission Controllerが有効だから
+
+Podを作成しようとすると、失敗する。
+→Admission ControllerのConfigで指定したサーバにアクセスできないから。
+
+```
+$ kubectl run nginx --image nginx
+Error from server (Forbidden): pods "nginx" is forbidden: Post "https://external-service:1234/check-image?timeout=30s": dial tcp: lookup external-service on 169.254.169.254:53: no such host
+```
+
+admission_config.yamlのdefaultAllowをfalseから`true`に変えて、API Serverを再起動する。
+
+```/etc/kubernetes/admission/admission_config.yaml
+apiVersion: apiserver.config.k8s.io/v1
+kind: AdmissionConfiguration
+plugins:
+  - name: ImagePolicyWebhook
+    configuration:
+      imagePolicy:
+        kubeConfigFile: /etc/kubernetes/admission/kubeconf
+        allowTTL: 50
+        denyTTL: 50
+        retryBackoff: 500
+        defaultAllow: true #Change
+```
+
+API Serverが表示されるようになって
+
+```
+$ kubectl get pod -n kube-system
+NAME                                       READY   STATUS    RESTARTS       AGE
+calico-kube-controllers-74677b4c5f-7n96t   1/1     Running   15 (18m ago)   3d23h
+calico-node-9zqzt                          0/1     Running   4 (5h ago)     3d23h
+calico-node-jh9pk                          0/1     Running   4 (5h ago)     3d23h
+coredns-565d847f94-fmgwf                   1/1     Running   4 (5h ago)     3d23h
+coredns-565d847f94-kmw8r                   1/1     Running   4 (5h ago)     3d23h
+etcd-master-20230115                       1/1     Running   4 (5h ago)     3d23h
+kube-apiserver-master-20230115             1/1     Running   1 (20s ago)    13s
+kube-controller-manager-master-20230115    1/1     Running   9 (39s ago)    3d23h
+kube-proxy-2smbp                           1/1     Running   4 (5h ago)     3d23h
+kube-proxy-8x2t8                           1/1     Running   4 (5h ago)     3d23h
+kube-scheduler-master-20230115             1/1     Running   8 (38s ago)    3d23h
+```
+
+Podも作れるようになる。
+
+```
+$ kubectl run nginx --image nginx
+pod/nginx created
+```
