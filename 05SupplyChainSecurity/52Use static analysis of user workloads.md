@@ -166,3 +166,106 @@ $ sudo docker run -i kubesec/kubesec:512c5e0 scan /dev/stdin < pod.yaml
   }
 ]
 ```
+
+## OPAによるマニフェストファイルのチェック
+
+サンプルのダウンロード
+```
+$ git clone https://github.com/killer-sh/cks-course-environment.git
+Cloning into 'cks-course-environment'...
+remote: Enumerating objects: 467, done.
+remote: Counting objects: 100% (186/186), done.
+remote: Compressing objects: 100% (101/101), done.
+remote: Total 467 (delta 114), reused 137 (delta 85), pack-reused 281
+Receiving objects: 100% (467/467), 138.79 KiB | 19.83 MiB/s, done.
+Resolving deltas: 100% (185/185), done.
+$ ls cks-course-environment/
+README.md  cluster-setup  course-content
+$ cd cks-course-environment/course-content/supply-chain-security/static-analysis/conftest/
+$ ls -l
+total 8
+drwxrwxr-x 3 ubuntu ubuntu 4096 Jan 21 12:24 docker
+drwxrwxr-x 3 ubuntu ubuntu 4096 Jan 21 12:24 kubernetes
+$ cd kubernetes/
+$ ls -l
+total 12
+-rw-rw-r-- 1 ubuntu ubuntu  386 Jan 21 12:24 deploy.yaml
+drwxrwxr-x 2 ubuntu ubuntu 4096 Jan 21 12:24 policy
+-rwxrwxr-x 1 ubuntu ubuntu   77 Jan 21 12:24 run.sh
+```
+
+サンプルの中身を確認する。
+
+```deploy.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: test
+  name: test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: test
+    spec:
+      containers:
+        - image: httpd
+          name: httpd
+          resources: {}
+status: {}
+```
+
+```policy/deployment.rego
+# from https://www.conftest.dev
+package main
+
+deny[msg] {
+  input.kind = "Deployment"
+  not input.spec.template.spec.securityContext.runAsNonRoot = true
+  msg = "Containers must not run as root"
+}
+
+deny[msg] {
+  input.kind = "Deployment"
+  not input.spec.selector.matchLabels.app
+  msg = "Containers must provide app label for pod selectors"
+}
+```
+
+```run.sh
+docker run --rm -v $(pwd):/project openpolicyagent/conftest test deploy.yaml
+```
+
+shell scriptを実行する。
+
+```
+$ sudo ./run.sh
+Unable to find image 'openpolicyagent/conftest:latest' locally
+latest: Pulling from openpolicyagent/conftest
+c158987b0551: Pull complete
+c46e96724b2d: Pull complete
+7499f410484d: Pull complete
+128b73c106c4: Pull complete
+d37d968d2957: Pull complete
+Digest: sha256:ecf453c2537bd9d3005df068f35409557061c91807d33b170088ae8caeeee200
+Status: Downloaded newer image for openpolicyagent/conftest:latest
+FAIL - deploy.yaml - main - Containers must not run as root
+
+2 tests, 1 passed, 0 warnings, 1 failure, 0 exceptions
+```
+
+deploy.yamlにSecurityContextで`runAsNonRoot: true`を追記して再度実行する。
+
+```
+$ sudo ./run.sh
+
+2 tests, 2 passed, 0 warnings, 0 failures, 0 exceptions
+```
