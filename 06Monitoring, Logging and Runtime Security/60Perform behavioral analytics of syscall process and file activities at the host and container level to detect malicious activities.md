@@ -1,5 +1,7 @@
 # マニュアル
 https://falco.org/ja/docs/getting-started/installation/
+https://falco.org/docs/rules/supported-fields
+
 
 # 学習ログ
 ## Strace
@@ -661,4 +663,137 @@ Jan 23 13:23:23 worker-20230122 falco: 13:23:23.442834341: Error Package managem
 
 ```
 Jan 23 13:24:31 worker-20230122 falco: 13:24:31.858405923: Warning Shell history had been deleted or renamed (user=<NA> user_loginuid=-1 type=openat command=bash pid=263941 fd.name=/root/.bash_history name=/root/.bash_history path=<NA> oldpath=<NA> nginx (id=4edbcbca7577))
+```
+
+### Falco rules
+
+Falco の Serviceを停止する。
+
+```
+worker# systemctl status falco
+● falco.service - Falco: Container Native Runtime Security
+     Loaded: loaded (/lib/systemd/system/falco.service; enabled; vendor preset: enabled)
+     Active: active (running) since Tue 2023-01-24 13:10:38 UTC; 7s ago
+       Docs: https://falco.org/docs/
+   Main PID: 194334 (falco)
+      Tasks: 10 (limit: 19106)
+     Memory: 14.7M
+     CGroup: /system.slice/falco.service
+             mq194334 /usr/bin/falco --pidfile=/var/run/falco.pid
+
+Jan 24 13:10:39 worker-20230122 falco[194334]: Loading rules from file /etc/falco/falco_rules.local.yaml
+Jan 24 13:10:39 worker-20230122 falco[194334]: Tue Jan 24 13:10:39 2023: Loading rules from file /etc/falco/falco_rules.local.yaml
+Jan 24 13:10:39 worker-20230122 falco[194334]: The chosen syscall buffer dimension is: 8388608 bytes (8 MBs)
+Jan 24 13:10:39 worker-20230122 falco[194334]: Tue Jan 24 13:10:39 2023: The chosen syscall buffer dimension is: 8388608 bytes (8 MBs)
+Jan 24 13:10:39 worker-20230122 falco[194334]: Tue Jan 24 13:10:39 2023: Starting health webserver with threadiness 2, listening on port 8765
+Jan 24 13:10:39 worker-20230122 falco[194334]: Starting health webserver with threadiness 2, listening on port 8765
+Jan 24 13:10:39 worker-20230122 falco[194334]: Enabled event sources: syscall
+Jan 24 13:10:39 worker-20230122 falco[194334]: Opening capture with Kernel module
+Jan 24 13:10:39 worker-20230122 falco[194334]: Tue Jan 24 13:10:39 2023: Enabled event sources: syscall
+Jan 24 13:10:39 worker-20230122 falco[194334]: Tue Jan 24 13:10:39 2023: Opening capture with Kernel module
+worker# systemctl stop falco
+```
+
+falcoコマンドを実行する。
+
+```
+worker# falco
+Tue Jan 24 13:16:48 2023: Falco version: 0.33.1 (x86_64)
+Tue Jan 24 13:16:48 2023: Falco initialized with configuration file: /etc/falco/falco.yaml
+Tue Jan 24 13:16:48 2023: Loading rules from file /etc/falco/falco_rules.yaml
+Tue Jan 24 13:16:48 2023: Loading rules from file /etc/falco/falco_rules.local.yaml
+Tue Jan 24 13:16:48 2023: The chosen syscall buffer dimension is: 8388608 bytes (8 MBs)
+Tue Jan 24 13:16:48 2023: Starting health webserver with threadiness 2, listening on port 8765
+Tue Jan 24 13:16:48 2023: Enabled event sources: syscall
+Tue Jan 24 13:16:48 2023: Opening capture with Kernel module
+Tue Jan 24 13:16:48 2023: Trying to inject the Kernel module and opening the capture again...
+```
+
+master nodeでコンテナにログインする。
+
+```
+$ kubectl get pod
+NAME    READY   STATUS    RESTARTS        AGE
+nginx   1/1     Running   1 (5h26m ago)   24h
+$ kubectl exec -it nginx -- bash
+root@nginx:/#
+```
+
+falcoコマンドの出力に以下が出る。
+
+```
+13:18:51.488350481: Notice A shell was spawned in a container with an attached terminal (user=<NA> user_loginuid=-1 nginx (id=56c4feba36ed) shell=bash parent=runc cmdline=bash pid=199354 terminal=34816 container_id=56c4feba36ed image=docker.io/library/nginx)
+```
+
+Ctrl-Cで止める。
+
+```
+^CTue Jan 24 13:20:36 2023: SIGINT received, exiting...
+Syscall event drop monitoring:
+   - event drop detected: 0 occurrences
+   - num times actions taken: 0
+Events detected: 1
+Rule counts by severity:
+   NOTICE: 1
+Triggered rules by rule name:
+   Terminal shell in container: 1
+```
+
+コンテナのターミナルに接続したときに表示されるメッセージ`A shell was spawned in a container with an attached terminal`の出力をカスタマイズする。
+
+どのファイルに設定があるか確認する。
+
+```
+/etc/falco# grep -r "A shell was spawned in a container with an attached terminal" .
+./falco_rules.yaml:    A shell was spawned in a container with an attached terminal (user=%user.name user_loginuid=%user.loginuid %container.info
+```
+
+このファイルからこのルールの記載全体をコピーする。
+
+```
+- rule: Terminal shell in container
+  desc: A shell was used as the entrypoint/exec point into a container with an attached terminal.
+  condition: >
+    spawned_process and container
+    and shell_procs and proc.tty != 0
+    and container_entrypoint
+    and not user_expected_terminal_shell_in_container_conditions
+  output: >
+    A shell was spawned in a container with an attached terminal (user=%user.name user_loginuid=%user.loginuid %container.info
+    shell=%proc.name parent=%proc.pname cmdline=%proc.cmdline pid=%proc.pid terminal=%proc.tty container_id=%container.id image=%container.image.repository)
+  priority: NOTICE
+  tags: [container, shell, mitre_execution]
+```
+
+これを`falco_rules.local.yaml`にペーストして編集する。
+
+NoticeをWARNINGに変えて、出力されるメッセージを変更する。
+
+```falco_rules.local.yaml
+- rule: Terminal shell in container
+  desc: A shell was used as the entrypoint/exec point into a container with an attached terminal.
+  condition: >
+    spawned_process and container
+    and shell_procs and proc.tty != 0
+    and container_entrypoint
+    and not user_expected_terminal_shell_in_container_conditions
+  output: >
+    %evt.time,%user.name,%container.name,%container.id
+  priority: WARNING
+  tags: [container, shell, mitre_execution]
+```
+
+再度falcoコマンドを実行して、コンテナにログインすると、メッセージが変わってる。
+
+```
+# falco
+Tue Jan 24 13:38:02 2023: Falco version: 0.33.1 (x86_64)
+Tue Jan 24 13:38:02 2023: Falco initialized with configuration file: /etc/falco/falco.yaml
+Tue Jan 24 13:38:02 2023: Loading rules from file /etc/falco/falco_rules.yaml
+Tue Jan 24 13:38:02 2023: Loading rules from file /etc/falco/falco_rules.local.yaml
+Tue Jan 24 13:38:02 2023: The chosen syscall buffer dimension is: 8388608 bytes (8 MBs)
+Tue Jan 24 13:38:02 2023: Starting health webserver with threadiness 2, listening on port 8765
+Tue Jan 24 13:38:02 2023: Enabled event sources: syscall
+Tue Jan 24 13:38:02 2023: Opening capture with Kernel module
+13:38:11.354268945: Warning 13:38:11.354268945,<NA>,nginx,56c4feba36ed
 ```
