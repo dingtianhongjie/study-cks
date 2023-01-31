@@ -126,3 +126,34 @@ Audit logにかかれる。
 	}
 }
 ```
+
+ ## Audit Policyのカスタマイズ
+ Policyファイルを以下のように編集する。
+
+ ```policy.yaml
+apiVersion: audit.k8s.io/v1
+kind: Policy
+
+# 全てのリクエストのRequestReceived (監査ハンドラーがリクエストを受信すると同時に生成されるイベントのステージ)でログを生成しない。
+omitStages:
+  - "RequestReceived"
+rules:
+
+# "get", "list", "watch"の監査ログを取得しない。
+  - level: None
+    verbs: ["get", "list", "watch"]
+
+# Secretのリクエストのメタデータを記録する
+  - level: Metadata
+    resources:
+    - group: ""
+      resources: ["secrets"]
+
+# その他全てはRequestResponse（イベントのメタデータ、リクエストとレスポンスのボディを記録） レベルで記録する。
+  - level: RequestResponse
+ ```
+
+ API Serverのマニフェストを編集して、APIサーバを再起動させる。
+
+ audit.logを確認し、想定通りに監査ログが吐かれていることを確認する。
+
