@@ -1,6 +1,8 @@
 # マニュアル
 https://kubernetes.io/docs/concepts/services-networking/ingress/
+
 https://kubernetes.io/ja/docs/concepts/services-networking/ingress-controllers/
+
 https://kubernetes.github.io/ingress-nginx/deploy/
 
 # 学習ログ
